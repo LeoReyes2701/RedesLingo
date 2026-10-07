@@ -76,9 +76,96 @@
   NODES.forEach((n, i) => { n.i = i; NODE[n.id] = n; });
   const MAIN_NODES = NODES.filter(n => !(n.unit && n.unit.extra));
 
-  const getStep = ref => { const [lid, k] = String(ref).split(':'); const L = LESSONS[lid]; return L ? L.steps[+k] : null; };
-  const lessonOf = ref => LESSONS[String(ref).split(':')[0]];
-  const exRefsOf = l => l.steps.map((s, k) => (s.t === 'teach' ? null : l.id + ':' + k)).filter(Boolean);
+  // Lección de estudio rápido (fuera de la ruta): Tabla de clases IP
+  const QUICK = window.RL && window.RL.quick;
+  if (QUICK) {
+    QUICK.unit = { id: 'quick', kicker: QUICK.kicker, title: QUICK.title, color: QUICK.color, dark: QUICK.dark, lessons: [QUICK] };
+    QUICK.num = 1; LESSONS[QUICK.id] = QUICK;
+  }
+  // Sesiones que no son niveles de la ruta
+  const SPECIAL = {
+    mistakes: { title: 'Práctica de errores', tag: '🎯 Práctica de errores', xp: 5, doneTitle: '¡Errores repasados!', doneSub: 'Practicar lo que fallas es la mejor forma de aprender.' },
+    ipq: { title: 'Tabla de clases IP', tag: '⚡ Estudio rápido', xp: 10, doneTitle: '¡Tabla de clases IP aprendida! 🅰️', doneSub: 'Ahora practica analizando IPs hasta que te salgan todas.' },
+    ipdrill: { title: 'Práctica de IPs', tag: '🎯 Práctica de IPs', xp: 10, doneTitle: '¡Práctica de IPs completada! 🎯', doneSub: 'Cada ronda trae IPs nuevas. ¡Repite hasta sacar 100%!' }
+  };
+
+  const getStep = (ref, run) => {
+    ref = String(ref);
+    if (ref.startsWith('gen:')) { const r = run === undefined ? S.run : run; return r && r.gen ? r.gen[ref] || null : null; }
+    const [lid, k] = ref.split(':'); const L = LESSONS[lid]; return L ? L.steps[+k] || null : null;
+  };
+  const lessonOf = ref => (String(ref).startsWith('gen:') ? LESSONS.ipq : LESSONS[String(ref).split(':')[0]]);
+  const exRefsOf = l => l.steps.map((s, k) => (s.t === 'teach' || s.t === 'gen' ? null : l.id + ':' + k)).filter(Boolean);
+
+  /* ---------- Generador de ejercicios "Analiza la IP" ---------- */
+  const rnd = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+  const CLS = { A: { r: [1, 127], net: 1 }, B: { r: [128, 191], net: 2 }, C: { r: [192, 223], net: 3 } };
+  const MASK_OF = { A: '255.0.0.0', B: '255.255.0.0', C: '255.255.255.0' };
+  const TYPE_LABEL = { host: 'Host normal', mask: 'Máscara de subred', broadcast: 'Broadcast', red: 'Dirección de red' };
+  function invalidIp() {
+    const o = [rnd(1, 223), rnd(0, 255), rnd(0, 255), rnd(1, 254)];
+    const k = pick(['big', 'big', 'big', 'big', 'three', 'five', 'letter', 'empty', 'neg']);
+    let why;
+    if (k === 'big') { const i = rnd(0, 3), v = pick([256, 300, rnd(256, 999)]); o[i] = v; why = `el octeto ${v} es mayor que 255 (cada octeto va de 0 a 255)`; }
+    else if (k === 'three') { o.pop(); why = 'tiene solo 3 octetos; una IPv4 necesita exactamente 4'; }
+    else if (k === 'five') { o.push(rnd(0, 255)); why = 'tiene 5 octetos; una IPv4 tiene exactamente 4'; }
+    else if (k === 'letter') { const i = rnd(1, 3), v = pick(['a', 'x', '1a', 'b2', 'ab']); o[i] = v; why = `contiene "${v}", que no es un número`; }
+    else if (k === 'empty') { o[rnd(1, 2)] = ''; why = 'tiene un octeto vacío (dos puntos seguidos)'; }
+    else { const i = rnd(1, 3), v = -rnd(1, 20); o[i] = v; why = `tiene un número negativo (${v}); los octetos van de 0 a 255`; }
+    return { t: 'ipcheck', ip: o.join('.'), valid: false, e: `❌ Inválida: ${why}.` };
+  }
+  function genIp(kind) {
+    if (kind === 'invalid') return invalidIp();
+    if (kind === 'mask') {
+      const m = Math.random() < 0.75 ? pick(['255.0.0.0', '255.255.0.0', '255.255.255.0']) : pick(['255.255.255.128', '255.255.255.192', '255.255.240.0', '255.255.255.252', '255.240.0.0']);
+      const bits = m.split('.').reduce((a, x) => a + (Number(x).toString(2).match(/1/g) || []).length, 0);
+      return { t: 'ipcheck', ip: m, valid: true, type: 'mask', e: `✅ Formato válido · Son 255 (bits en 1) seguidos de 0 → máscara de subred /${bits}. Las máscaras no tienen clase.` };
+    }
+    const c = pick(['A', 'B', 'C']), n = CLS[c].net;
+    let first;
+    if (Math.random() < 0.4) first = c === 'A' ? pick([10, 10, 12, 100]) : c === 'B' ? pick([172, 172, 150, 190]) : pick([192, 192, 200, 210]);
+    else first = c === 'A' ? rnd(1, 126) : rnd(CLS[c].r[0], CLS[c].r[1]);
+    const net = [first];
+    while (net.length < n) net.push(net.length === 1 && first === 172 ? rnd(16, 31) : net.length === 1 && first === 192 ? 168 : rnd(0, 255));
+    const hn = 4 - n;
+    let host;
+    if (kind === 'broadcast') host = Array(hn).fill(255);
+    else if (kind === 'red') host = Array(hn).fill(0);
+    else {
+      do {
+        host = hn === 1 ? [Math.random() < 0.3 ? pick([1, 254]) : rnd(1, 254)]
+          : Array.from({ length: hn }, () => (Math.random() < 0.45 ? pick([0, 255]) : rnd(1, 254)));
+      } while (host.every(v => v === 0) || host.every(v => v === 255));
+    }
+    const hp = host.join('.');
+    const verdict = kind === 'broadcast' ? 'toda en 255 → broadcast (no se asigna a equipos)'
+      : kind === 'red' ? 'toda en 0 → dirección de red (no se asigna a equipos)'
+      : 'no es toda 0 ni toda 255 → host normal (se puede asignar a una PC)';
+    return {
+      t: 'ipcheck', ip: net.concat(host).join('.'), valid: true, type: kind, cls: c, hp, hn,
+      e: `✅ Formato válido · ${first} está entre ${CLS[c].r[0]} y ${CLS[c].r[1]} → Clase ${c} (máscara ${MASK_OF[c]}) · Parte de host: ${hp} → ${verdict}.`
+    };
+  }
+  function genSet(n) {
+    const kinds = ['invalid', 'invalid', 'mask', 'broadcast', 'broadcast', 'broadcast', 'red', 'host', 'host', 'host'];
+    const out = [], seen = new Set();
+    let bag = [];
+    while (out.length < n) {
+      if (!bag.length) bag = shuffle(kinds);
+      const g = genIp(bag.pop());
+      if (seen.has(g.ip)) continue;
+      seen.add(g.ip); out.push(g);
+    }
+    return out;
+  }
+  function buildQuick(id) {
+    const L = LESSONS.ipq, gen = {}, list = [];
+    let g = 0;
+    const addGen = n => genSet(n).forEach(st => { const ref = 'gen:' + g++; gen[ref] = st; list.push(ref); });
+    if (id === 'ipq') L.steps.forEach((s, k) => { if (s.t === 'gen') addGen(s.n); else list.push('ipq:' + k); });
+    else { addGen(12); sampleLessons([L], 4).forEach(r => list.push(r)); }
+    return { list: id === 'ipdrill' ? shuffle(list) : list, gen };
+  }
   function sampleLessons(lessons, k) {
     const pools = shuffle(lessons).map(l => shuffle(exRefsOf(l)));
     const out = [];
@@ -88,16 +175,16 @@
 
   /* ---------- Estado persistente ---------- */
   const KEY = 'redeslingo:v1';
-  const DEF = () => ({ v: 1, done: {}, xp: 0, streak: { n: 0, last: null }, mistakes: {}, run: null, sound: true, theme: 'auto', avatarAt: null, stats: { first: 0, ex: 0, runs: 0, hints: 0 }, created: Date.now() });
+  const DEF = () => ({ v: 1, done: {}, xp: 0, streak: { n: 0, last: null }, mistakes: {}, run: null, sound: true, theme: 'auto', free: true, avatarAt: null, stats: { first: 0, ex: 0, runs: 0, hints: 0 }, created: Date.now() });
   function sanitize(o) {
     const s = Object.assign(DEF(), o && typeof o === 'object' ? o : {});
     s.done = s.done && typeof s.done === 'object' ? s.done : {};
     s.mistakes = s.mistakes && typeof s.mistakes === 'object' ? s.mistakes : {};
     s.streak = Object.assign({ n: 0, last: null }, s.streak || {});
     s.stats = Object.assign(DEF().stats, s.stats || {});
-    Object.keys(s.mistakes).forEach(r => { if (!getStep(r)) delete s.mistakes[r]; });
+    Object.keys(s.mistakes).forEach(r => { if (!getStep(r, null)) delete s.mistakes[r]; });
     const r = s.run;
-    if (r && (!Array.isArray(r.list) || !r.list.length || r.list.some(x => !getStep(x)) || (r.node !== 'mistakes' && !NODE[r.node]))) s.run = null;
+    if (r && (!Array.isArray(r.list) || !r.list.length || r.list.some(x => !getStep(x, r)) || (!SPECIAL[r.node] && !NODE[r.node]))) s.run = null;
     return s;
   }
   function load() {
@@ -116,11 +203,11 @@
   const pct = (list = NODES) => Math.round(100 * doneCount(list) / list.length);
   const curIndex = () => NODES.findIndex(n => !isDone(n.id));
   const unlocked = i => i === 0 || isDone(NODES[i].id) || isDone(NODES[i - 1].id);
-  const nodeState = (i, ci) => (isDone(NODES[i].id) ? 'done' : i === ci ? 'current' : unlocked(i) ? 'open' : 'locked');
+  const nodeState = (i, ci) => (isDone(NODES[i].id) ? 'done' : i === ci ? 'current' : unlocked(i) || S.free ? 'open' : 'locked');
   const streakNow = () => (!S.streak.last ? 0 : dayDiff(S.streak.last, today()) <= 1 ? S.streak.n : 0);
   const mistakeCount = () => Object.keys(S.mistakes).length;
   const xpFor = n => (n.type === 'final' ? 30 : n.type === 'review' ? 15 : 10);
-  const runTitle = r => (r.node === 'mistakes' ? 'Práctica de errores' : NODE[r.node].title);
+  const runTitle = r => (SPECIAL[r.node] ? SPECIAL[r.node].title : NODE[r.node].title);
 
   /* ---------- Sonido (Web Audio, sin archivos) ---------- */
   const Snd = {
@@ -247,7 +334,7 @@
   function renderPath(centerCurrent) {
     screen = 'path';
     const ci = curIndex();
-    let h = topbar() + `<main class="path-wrap page" id="pw"><svg class="path-svg" id="psvg" aria-hidden="true"></svg>`;
+    let h = topbar() + `<main class="path-wrap page" id="pw"><svg class="path-svg" id="psvg" aria-hidden="true"></svg>` + quickCard();
     SECTIONS.forEach(sec => {
       const d = doneCount(sec.nodes), tot = sec.nodes.length;
       h += `<section class="unit" style="--u:${sec.color};--u-d:${sec.dark}">
@@ -278,7 +365,24 @@
     requestAnimationFrame(() => { drawRoad(); placeAvatar(centerCurrent !== false); });
   }
 
+  function quickCard() {
+    if (!QUICK) return '';
+    return `<div class="quick">
+      <div class="qk-h">⚡ Estudio rápido para el examen</div>
+      <div class="qk-row"><div class="qk-ic">🅰️</div><div class="qk-t"><b>Tabla de clases IP</b><small>Apréndete la tabla y analiza IPs: ¿válida? · ¿host, máscara, red o broadcast? · ¿qué clase?</small></div></div>
+      <div class="qk-btns"><button class="btn sm" data-quick="ipq">📖 Aprender la tabla</button><button class="btn sm blue" data-quick="ipdrill">🎯 Practicar IPs</button></div>
+      <div class="qk-free"><span>🔓 <b>Modo libre</b>: abre cualquier nivel sin completar los anteriores</span><button class="sw ${S.free ? 'on' : ''}" id="freesw" aria-label="Activar o desactivar modo libre"></button></div>
+    </div>`;
+  }
+  function toggleFree() {
+    S.free = !S.free; save(); Snd.tap();
+    toast(S.free ? '🔓 Modo libre: puedes abrir cualquier nivel' : '🔒 Ruta en orden: los niveles se desbloquean al completar el anterior');
+    if (screen === 'path') { const y = window.scrollY; renderPath(false); window.scrollTo(0, y); } else renderProfile();
+  }
+
   function bindPath() {
+    $$('[data-quick]', app).forEach(b => b.addEventListener('click', () => { Snd.tap(); startNode(b.dataset.quick); }));
+    const fs = $('#freesw'); if (fs) fs.addEventListener('click', toggleFree);
     $$('.node', app).forEach(b => b.addEventListener('click', e => { e.stopPropagation(); Snd.tap(); openPop(NODE[b.dataset.node], b); }));
     $$('[data-guide]', app).forEach(b => b.addEventListener('click', () => go('guide', b.dataset.guide)));
     const fab = $('#fabcur'); if (fab) fab.addEventListener('click', () => scrollToCurrent(true));
@@ -390,13 +494,15 @@
       return;
     }
     const n = NODE[id];
-    let list;
+    let list, gen = null;
     if (id === 'mistakes') list = shuffle(Object.keys(S.mistakes).sort((a, b) => S.mistakes[b] - S.mistakes[a]).slice(0, 15));
+    else if (id === 'ipq' || id === 'ipdrill') ({ list, gen } = buildQuick(id));
     else if (n.type === 'lesson') list = n.lesson.steps.map((_, k) => n.lesson.id + ':' + k);
     else if (n.type === 'review') list = sampleLessons(n.unit.lessons, 12);
     else list = shuffle([].concat(...UNITS.filter(u => !u.extra).map(u => sampleLessons(u.lessons, 5))));
     if (!list.length) { toast('No hay preguntas para practicar'); return; }
-    S.run = { node: id, list, pos: 0, done: 0, total: list.length, exTotal: list.filter(r => getStep(r).t !== 'teach').length, first: 0, wrong: 0, hints: 0, combo: 0, best: 0, failed: {}, t: 0, replay: n ? isDone(n.id) : false };
+    const tmp = { gen };
+    S.run = { node: id, list, gen, pos: 0, done: 0, total: list.length, exTotal: list.filter(r => getStep(r, tmp).t !== 'teach').length, first: 0, wrong: 0, hints: 0, combo: 0, best: 0, failed: {}, t: 0, replay: n ? isDone(n.id) : false };
     lastBar = 0;
     save();
     openLesson();
@@ -420,12 +526,14 @@
     const retry = !!r.failed[ref] && r.list.indexOf(ref) < r.pos;
     cur = { ref, st, L, hint: 0, reveal: 0, sel: null, locked: false, elim: new Set(), t0: Date.now() };
     const p = Math.round(100 * r.done / r.total);
-    const tag = r.node === 'mistakes' ? '🎯 Práctica de errores' : r.node === 'final' ? '👑 Examen final' : NODE[r.node].type === 'review' ? '🏆 Repaso' : '';
+    const sp = SPECIAL[r.node];
+    const tag = sp ? sp.tag + (r.node === 'mistakes' ? ' · ' + L.title : '')
+      : r.node === 'final' ? '👑 Examen final · ' + L.title : NODE[r.node].type === 'review' ? '🏆 Repaso · ' + L.title : '';
     app.innerHTML = `<div class="lesson" style="--u:${u.color};--u-d:${u.dark}">
       <header class="l-head"><button class="l-close" id="lclose" aria-label="Salir de la lección">✕</button>
         <div class="bar lg" title="Progreso de la lección"><i id="lbar" style="width:${lastBar}%"></i></div><div class="combo" id="combo">${r.combo >= 2 ? '🔥' + r.combo : ''}</div></header>
       <div class="l-body" id="lbody"><div class="l-body-in">
-        ${retry ? '<div class="q-kind" style="color:var(--orange)">↻ Pregunta que fallaste</div>' : tag && st.t !== 'teach' ? `<div class="q-kind" style="color:var(--u)">${tag} · ${esc(L.title)}</div>` : ''}
+        ${retry ? '<div class="q-kind" style="color:var(--orange)">↻ Pregunta que fallaste</div>' : tag && st.t !== 'teach' ? `<div class="q-kind" style="color:var(--u)">${esc(tag)}</div>` : ''}
         ${bodyFor(st)}
       </div></div>
       <footer class="l-foot" id="lfoot">${footFor(st)}</footer></div>`;
@@ -472,8 +580,52 @@
         return `<div class="q-kind">${st.term ? '⌨️ Escribe el comando' : 'Escribe la respuesta'}</div><h2 class="q">${esc(st.q)}</h2>${f}<div id="hintslot"></div>${inp}
           <div class="type-note">No importan mayúsculas ni tildes.</div>`;
       }
+      case 'ipcheck':
+        cur.phases = st.valid ? (st.type === 'mask' ? ['valid', 'type'] : ['valid', 'type', 'cls']) : ['valid'];
+        cur.phase = 0; cur.phHint = 0;
+        return `<div class="q-kind">🔍 Analiza la dirección IP</div><div class="ipbig">${esc(st.ip)}</div>
+          <p class="ip-note">Usa la máscara por defecto de su clase</p>
+          <div class="phases">${['1 · Formato', '2 · Tipo', '3 · Clase'].map((l, k) => `<span class="ph" data-ph="${k}">${l}</span>`).join('')}</div>
+          <div id="hintslot"></div><div id="ipph"></div>`;
     }
     return '';
+  }
+
+  /* Ejercicio "Analiza la IP": formato → tipo → clase */
+  const IP_PHASES = {
+    valid: { q: '¿Esta dirección IPv4 tiene un formato válido?', o: [['valid', '✅ Sí, es válida'], ['invalid', '❌ No, es inválida']],
+      h: 'Revisa: ¿tiene 4 octetos separados por puntos? ¿Solo números? ¿Cada uno entre 0 y 255?' },
+    type: { q: '¿Qué tipo de dirección es?', o: [['host', 'Host normal (asignable a una PC)'], ['mask', 'Máscara de subred'], ['broadcast', 'Broadcast'], ['red', 'Dirección de red']],
+      h: '¿Son 255 seguidos de 0? → máscara. Si no, busca la clase y mira su parte de host: toda en 0 = red · toda en 255 = broadcast · otra cosa = host normal.' },
+    cls: { q: '¿De qué clase es?', o: [['A', 'Clase A'], ['B', 'Clase B'], ['C', 'Clase C'], ['D', 'Clase D'], ['E', 'Clase E']],
+      h: 'Mira el primer octeto: A 1–127 · B 128–191 · C 192–223 · D 224–239 · E 240–255.' }
+  };
+  const ipAnswer = (st, ph) => (ph === 'valid' ? (st.valid ? 'valid' : 'invalid') : ph === 'type' ? st.type : st.cls);
+  const shortLbl = (ph, v) => (ph === 'valid' ? (v === 'valid' ? 'Válida' : 'Inválida') : ph === 'type' ? TYPE_LABEL[v] : 'Clase ' + v);
+  function renderIpPhase() {
+    const ph = cur.phases[cur.phase], P = IP_PHASES[ph];
+    cur.sel = null; cur.phHint = 0;
+    $$('.ph').forEach((el, k) => el.classList.toggle('on', k === cur.phase));
+    $('#hintslot').innerHTML = '';
+    $('#ipph').innerHTML = `<h2 class="q ip-q">${esc(P.q)}</h2><div class="opts" id="ipopts">${P.o.map(([v, l], k) => `<button class="opt" data-v="${v}"><span class="k">${k + 1}</span><span class="t">${esc(l)}</span></button>`).join('')}</div>`;
+    $$('#ipopts .opt').forEach(b => b.onclick = () => {
+      if (cur.locked) return; Snd.tap();
+      $$('#ipopts .opt').forEach(x => x.classList.remove('sel')); b.classList.add('sel');
+      cur.sel = b.dataset.v; $('#check').disabled = false;
+    });
+    $('#check').disabled = true;
+  }
+  function checkIpPhase() {
+    if (cur.locked || cur.sel == null) return;
+    const ph = cur.phases[cur.phase];
+    if (cur.sel !== ipAnswer(cur.st, ph)) { resolve(false); return; }
+    if (cur.phase < cur.phases.length - 1) {
+      const chip = $(`.ph[data-ph="${cur.phase}"]`);
+      chip.classList.remove('on'); chip.classList.add('ok'); chip.textContent = '✓ ' + shortLbl(ph, cur.sel);
+      cur.phase++; Snd.pair(); renderIpPhase();
+      return;
+    }
+    resolve(true);
   }
   function footFor(st) {
     if (st.t === 'teach') return '<div class="l-foot-in"><button class="btn wide" id="next">CONTINUAR</button></div>';
@@ -499,6 +651,8 @@
         $$('.tf').forEach(x => x.classList.remove('sel')); b.classList.add('sel');
         cur.sel = b.dataset.v === '1'; $('#check').disabled = false;
       });
+    } else if (st.t === 'ipcheck') {
+      renderIpPhase();
     } else if (st.t === 'match') {
       $$('.mt').forEach(b => b.onclick = () => tapMatch(b));
     } else if (st.t === 'order') {
@@ -561,11 +715,12 @@
     return false;
   }
   function check() {
+    if (cur.st.t === 'ipcheck') { checkIpPhase(); return; }
     if (cur.locked || cur.st.t === 'match') return;
     if ((cur.st.t === 'mcq' || cur.st.t === 'tf') && cur.sel == null) return;
     resolve(evaluate());
   }
-  function addMistake(ref) { S.mistakes[ref] = (S.mistakes[ref] || 0) + 1; }
+  function addMistake(ref) { if (String(ref).startsWith('gen:')) return; S.mistakes[ref] = (S.mistakes[ref] || 0) + 1; }
 
   function resolve(ok, opt = {}) {
     const r = S.run, ref = cur.ref;
@@ -602,6 +757,7 @@
     if (st.t === 'order') return st.o.join(' → ');
     if (st.t === 'type') return st.a[0];
     if (st.t === 'match') return st.p.map(p => p[0] + ' → ' + p[1]).join(' · ');
+    if (st.t === 'ipcheck') return (st.valid ? 'Válida' : 'Inválida') + (st.type ? ' · ' + TYPE_LABEL[st.type] : '') + (st.cls ? ' · Clase ' + st.cls : '');
     return '';
   }
   function showFeedback(ok, opt) {
@@ -616,6 +772,13 @@
       if (!ok) $(`.tf[data-v="${st.a ? 0 : 1}"]`).classList.add('wrong');
     } else if (st.t === 'order') {
       $('#ordans').classList.add(ok ? 'correct' : 'wrong');
+    } else if (st.t === 'ipcheck') {
+      const ph = cur.phases[cur.phase], ans = ipAnswer(st, ph);
+      $$('#ipopts .opt').forEach(b => b.classList.remove('sel'));
+      const c = $(`#ipopts .opt[data-v="${ans}"]`); if (c) c.classList.add('correct');
+      if (!ok) { const w = $(`#ipopts .opt[data-v="${cur.sel}"]`); if (w) w.classList.add('wrong'); }
+      const chip = $(`.ph[data-ph="${cur.phase}"]`);
+      if (chip) { chip.classList.remove('on'); chip.classList.add(ok ? 'ok' : 'bad'); chip.textContent = (ok ? '✓ ' : '✕ ') + shortLbl(ph, ok ? ans : cur.sel); }
     } else if (st.t === 'type') {
       const tin = $('#tin'); tin.readOnly = true; tin.blur();
       ($('#tbox') || tin).classList.add(ok ? 'correct' : 'wrong');
@@ -663,6 +826,25 @@
       box(`Repasa el concepto <b>«${esc(teach.title)}»</b>. Lee la afirmación palabra por palabra: un solo detalle puede hacerla falsa.`, more);
       return;
     }
+    if (st.t === 'ipcheck') {
+      const ph = cur.phases[cur.phase], ans = ipAnswer(st, ph), P = IP_PHASES[ph];
+      cur.phHint++;
+      if (cur.phHint === 1) { box(esc(P.h), more); return; }
+      if (cur.phHint === 2 && ph === 'type' && st.cls) {
+        box(`El primer octeto es <b>${esc(st.ip.split('.')[0])}</b> → clase <b>${st.cls}</b>, así que la parte de host son los últimos ${st.hn} octeto(s): <b>${esc(st.hp)}</b>`, more);
+        return;
+      }
+      const wrong = $$('#ipopts .opt').filter(b => b.dataset.v !== ans && !b.classList.contains('elim'));
+      if (wrong.length) {
+        const b = pick(wrong); b.classList.add('elim'); b.classList.remove('sel');
+        if (cur.sel === b.dataset.v) { cur.sel = null; $('#check').disabled = true; }
+        box(wrong.length > 1 ? 'Eliminé una opción incorrecta ✂️' : '¡Solo queda la correcta! Tócala 👉', esc(P.h));
+      } else {
+        const b = $(`#ipopts .opt[data-v="${ans}"]`); b.classList.remove('pulse'); void b.offsetWidth; b.classList.add('pulse');
+        box(`Es: <b>${esc(shortLbl(ph, ans))}</b>`);
+      }
+      return;
+    }
     if (st.t === 'mcq') {
       const wrong = cur.order.filter(oi => oi !== 0 && !cur.elim.has(oi));
       if (wrong.length) {
@@ -701,7 +883,7 @@
   }
 
   function showTheory(ref) {
-    const L = lessonOf(ref), idx = +String(ref).split(':')[1];
+    const L = lessonOf(ref), idx = String(ref).startsWith('gen:') ? Infinity : +String(ref).split(':')[1];
     const cards = L.steps.map((s, i) => ({ s, i })).filter(o => o.s.t === 'teach');
     if (!cards.length) return;
     let c = 0; cards.forEach((o, j) => { if (o.i < idx) c = j; });
@@ -732,8 +914,8 @@
   function finishRun() {
     const r = S.run, n = NODE[r.node];
     const acc = r.exTotal ? Math.round(100 * r.first / r.exTotal) : 100;
-    const replay = !n || r.replay;
-    const xp = (replay ? 5 : xpFor(n)) + (!replay && r.exTotal && acc === 100 ? 5 : 0);
+    const sp = SPECIAL[r.node];
+    const xp = sp ? sp.xp + (r.exTotal && acc === 100 ? 5 : 0) : (r.replay ? 5 : xpFor(n)) + (!r.replay && r.exTotal && acc === 100 ? 5 : 0);
     const before = pct();
     const newDone = !!n && !isDone(n.id);
     if (n) { const prev = S.done[n.id]; S.done[n.id] = { at: Date.now(), acc: Math.max(acc, prev ? prev.acc : 0), n: (prev ? prev.n : 0) + 1 }; }
@@ -741,7 +923,7 @@
     const t = today();
     if (S.streak.last !== t) { S.streak.n = S.streak.last && dayDiff(S.streak.last, t) === 1 ? S.streak.n + 1 : 1; S.streak.last = t; }
     S.stats.first += r.first; S.stats.ex += r.exTotal; S.stats.runs++;
-    const info = { n, xp, acc, time: r.t, before, after: pct(), newDone, hints: r.hints };
+    const info = { n, sp, node: r.node, xp, acc, time: r.t, before, after: pct(), newDone, hints: r.hints };
     S.run = null;
     save();
     if (newDone) pendingWalk = true;
@@ -752,7 +934,7 @@
     screen = 'done';
     let title = '¡Lección completada!';
     let sub = pick(['¡Sigue así, vas volando! 🚀', 'Cada lección te acerca a la meta 😎', '¡Tu cerebro está en modo router! 🧠', '¡Un paquete más que llega a destino! 📦']);
-    if (!x.n) { title = '¡Errores repasados!'; sub = 'Practicar lo que fallas es la mejor forma de aprender.'; }
+    if (x.sp) { title = x.sp.doneTitle; sub = x.sp.doneSub; }
     else if (x.n.type === 'review') { title = x.newDone ? '¡Unidad completada! 🏆' : '¡Repaso completado!'; sub = `Dominas "${x.n.unit.title}".`; }
     else if (x.n.type === 'final') { title = '¡Ruta del examen completada! 👑'; sub = 'Repasaste todo el contenido de las clases. ¡Vas con todo al examen!'; }
     if (x.newDone && x.after === 100) { title = '¡RedesLingo al 100%! 🎉'; sub = 'Completaste absolutamente todo, extras incluidos. ¡Eres crack de las redes!'; }
@@ -764,6 +946,7 @@
         <div class="st" style="--c:var(--blue)"><div class="h">Tiempo</div><div class="v">⏱ ${mm}:${String(ss).padStart(2, '0')}</div></div></div>
       <div class="done-prog"><div class="k"><span>Progreso del curso</span><span id="dpct">${x.before}%</span></div><div class="bar lg"><i id="dbar" style="width:${x.before}%"></i></div>
       ${x.hints ? `<div class="k" style="margin:8px 0 0;font-weight:700">💡 Usaste ${x.hints} pista(s). ¡Para eso están!</div>` : ''}</div>
+      ${x.node === 'ipq' || x.node === 'ipdrill' ? `<button class="btn blue wide" id="again" style="margin-bottom:12px">🎯 ${x.node === 'ipq' ? 'PRACTICAR IPs' : 'OTRA RONDA DE IPs'}</button>` : ''}
       <button class="btn wide" id="cont">CONTINUAR</button></div>`;
     confetti(); Snd.win();
     setTimeout(() => {
@@ -773,6 +956,7 @@
       step();
     }, 500);
     $('#cont').onclick = () => { if (history.state && history.state.l) history.back(); else renderPath(true); };
+    const ag = $('#again'); if (ag) ag.onclick = () => startNode('ipdrill');
   }
 
   /* ---------- Pantalla: Guía ---------- */
@@ -780,7 +964,7 @@
     screen = 'guide';
     let h = topbar() + `<main class="scr page"><h2>📖 Guía de estudio</h2><p class="lead">Toda la teoría de la ruta, por unidad y lección. Ideal para repasar rápido antes del examen.</p>
       <input class="search" id="gsearch" type="search" placeholder="🔎 Buscar (ej: CSMA, ping -t, clase B…)" autocomplete="off"><div id="glist">`;
-    UNITS.forEach(u => {
+    (QUICK ? [QUICK.unit] : []).concat(UNITS).forEach(u => {
       h += `<details class="g-unit" data-u="${u.id}" style="--u:${u.color}" ${focus === u.id ? 'open' : ''}><summary><div><small>${esc(u.kicker)}</small>${esc(u.title)}</div><span class="chev">▼</span></summary>`;
       u.lessons.forEach(l => {
         const cards = l.steps.filter(s => s.t === 'teach');
@@ -850,6 +1034,7 @@
       <div class="sec-t">Progreso por unidad · total ${pct()}%</div>
       ${SECTIONS.map(sec => { const p = pct(sec.nodes); return `<div class="u-row" style="--u:${sec.color}"><span class="n">${esc(sec.title)}</span><div class="bar sm"><i style="width:${p}%"></i></div><span class="p">${p}%</span></div>`; }).join('')}
       <div class="sec-t">Ajustes</div>
+      <div class="set-row"><div>🔓 Modo libre<small>Abre cualquier nivel sin completar los anteriores</small></div><button class="sw ${S.free ? 'on' : ''}" id="freesw2" aria-label="Activar o desactivar modo libre"></button></div>
       <div class="set-row"><div>🔊 Sonidos</div><button class="sw ${S.sound ? 'on' : ''}" id="snd" aria-label="Activar o desactivar sonidos"></button></div>
       <div class="set-row"><div>🌓 Tema</div><div class="seg" id="theme">${[['auto', 'Auto'], ['light', 'Claro'], ['dark', 'Oscuro']].map(([k, l]) => `<button data-th="${k}" class="${S.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
       <div class="sec-t">Tu progreso</div>
@@ -861,6 +1046,7 @@
       <p class="lead" style="text-align:center;margin-top:22px;font-size:13px">Contenido basado en las clases y prácticas de Redes de Comunicación de Datos.</p>
       </main>` + bnav('profile');
     app.innerHTML = h; app.classList.remove('has-resume'); syncTopbarH();
+    $('#freesw2').onclick = toggleFree;
     $('#snd').onclick = () => { S.sound = !S.sound; save(); $('#snd').classList.toggle('on', S.sound); Snd.tap(); };
     $$('#theme button').forEach(b => b.onclick = () => { S.theme = b.dataset.th; save(); applyTheme(); renderProfile(); });
     const inst = $('#inst'); if (inst) inst.onclick = async () => { deferredPrompt.prompt(); try { await deferredPrompt.userChoice; } catch (e) { /* cancelado */ } deferredPrompt = null; renderProfile(); };
@@ -904,7 +1090,7 @@
     if (e.target && e.target.tagName === 'INPUT') return;
     if (/^[1-9]$/.test(e.key)) {
       const k = +e.key - 1;
-      const list = cur.st.t === 'mcq' ? $$('.opt') : cur.st.t === 'tf' ? $$('.tf') : [];
+      const list = cur.st.t === 'mcq' || cur.st.t === 'ipcheck' ? $$('.opt') : cur.st.t === 'tf' ? $$('.tf') : [];
       if (list[k]) list[k].click();
     }
   });

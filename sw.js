@@ -1,10 +1,10 @@
 /* Service worker: permite usar RedesLingo sin conexión.
    Estrategia "red primero": si hay internet usa la versión más nueva y la guarda; si no, usa la copia guardada. */
-const CACHE = 'redeslingo-v1';
+const CACHE = 'redeslingo-v2';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './css/styles.css',
   './js/data/helpers.js', './js/data/u1.js', './js/data/u2.js', './js/data/u3.js', './js/data/u4.js',
-  './js/data/u5.js', './js/data/u6.js', './js/data/u7.js', './js/figs.js', './js/app.js',
+  './js/data/u5.js', './js/data/u6.js', './js/data/u7.js', './js/data/quick.js', './js/figs.js', './js/app.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
 ];
 

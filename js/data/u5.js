@@ -83,13 +83,13 @@ unit({
       id: 'u5l4', title: 'Clases de direcciones IP', icon: '🅰️',
       steps: [
         T('Clases A, B, C, D y E', 'La tabla más importante de la Clase 3 🌟',
-          `<div class="tw"><table class="tbl"><tr><th>Clase</th><th>Rango</th><th>Máscara</th><th>N° redes</th><th>N° hosts</th></tr>
-          <tr><td><b>A</b></td><td>1.0.0.0 – 127.255.255.255</td><td>255.0.0.0 (/8)</td><td>128 (2^7)</td><td>16.777.214 (2^24−2)</td></tr>
-          <tr><td><b>B</b></td><td>128.0.0.0 – 191.255.255.255</td><td>255.255.0.0 (/16)</td><td>16.384 (2^14)</td><td>65.534 (2^16−2)</td></tr>
-          <tr><td><b>C</b></td><td>192.0.0.0 – 223.255.255.255</td><td>255.255.255.0 (/24)</td><td>2.097.150 (2^21)</td><td>254 (2^8−2)</td></tr>
-          <tr><td><b>D</b></td><td>224.0.0.0 – 239.255.255.255</td><td colspan="3"><b>Multicast</b></td></tr>
-          <tr><td><b>E</b></td><td>240.0.0.0 – 255.255.255.255</td><td colspan="3"><b>Experimentales</b></td></tr></table></div>
-          Broadcast: A → x.255.255.255 · B → x.x.255.255 · C → x.x.x.255`),
+          `<div class="tw"><table class="tbl wide"><tr><th>Clase</th><th>Rango</th><th>Bits iniciales</th><th>Máscara</th><th>N.º de redes</th><th>N.º de hosts</th><th>Broadcast</th></tr>
+          <tr><td><b>A</b></td><td>1.0.0.0 – 127.255.255.255</td><td>0</td><td>255.0.0.0 (/8)</td><td>2<sup>7</sup> = 128</td><td>2<sup>24</sup> − 2 = 16.777.214</td><td>x.255.255.255</td></tr>
+          <tr><td><b>B</b></td><td>128.0.0.0 – 191.255.255.255</td><td>10</td><td>255.255.0.0 (/16)</td><td>2<sup>14</sup> = 16.384</td><td>2<sup>16</sup> − 2 = 65.534</td><td>x.x.255.255</td></tr>
+          <tr><td><b>C</b></td><td>192.0.0.0 – 223.255.255.255</td><td>110</td><td>255.255.255.0 (/24)</td><td>2<sup>21</sup> = 2.097.150 (lámina)</td><td>2<sup>8</sup> − 2 = 254</td><td>x.x.x.255</td></tr>
+          <tr><td><b>D</b></td><td>224.0.0.0 – 239.255.255.255</td><td>1110</td><td>–</td><td>Multicast</td><td>–</td><td>–</td></tr>
+          <tr><td><b>E</b></td><td>240.0.0.0 – 255.255.255.255</td><td>1111</td><td>–</td><td>Experimental / reservado</td><td>–</td><td>–</td></tr></table></div>
+          <p class="tnote">↔️ Desliza la tabla para ver todas las columnas.</p>`),
         M('¿A qué clase pertenece 172.16.5.4?', ['B', 'A', 'C', 'D'], 'B va de 128 a 191.'),
         M('¿A qué clase pertenece 200.10.20.30?', ['C', 'B', 'A', 'D'], 'C va de 192 a 223.'),
         M('¿Cuál es la máscara por defecto de la clase B?', ['255.255.0.0', '255.0.0.0', '255.255.255.0', '255.255.255.255']),
